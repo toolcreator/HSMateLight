@@ -33,7 +33,7 @@ data Config = Config {
    cAddr :: IP
   ,cPort :: Sock.PortNumber
   ,cDimension :: (Int, Int)
-  ,cStepTime :: Int
+  ,cStepTime :: Maybe Int
   ,cSynchronized :: Bool -- aggregate events, send only at step
   ,cEventProviders :: [EventProvider]
 }
@@ -67,7 +67,9 @@ runMateM conf fkt s = do
     IPv4 ip -> Sock.connect sock $ Sock.SockAddrInet (cPort conf) (toHostAddress ip)
     IPv6 ip -> Sock.connect sock $ Sock.SockAddrInet6 (cPort conf) 0 (toHostAddress6 ip) 0
   chanStepper <- newChan :: IO (Chan ())
-  dupChan chanStepper >>= forkIO . stepper (cStepTime conf)
+  case cStepTime conf of
+    Nothing -> return ()
+    Just time -> dupChan chanStepper >>= forkIO . stepper time >> return ()
   chanEvent <- newTChanIO :: IO (TChan Event)
   forM_ (cEventProviders conf) $ \ep -> atomically (dupTChan chanEvent) >>= forkIO . ep
   forkIO $ (if cSynchronized conf then acumulatingCaller else caller) sock chanStepper chanEvent undefined s
