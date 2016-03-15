@@ -4,7 +4,7 @@ import qualified Network.Socket.ByteString.Lazy as NBSL
 import qualified Data.ByteString.Lazy as BSL
 import Control.Monad
 
--- what on connectionc close?
+-- what on connection close?
 handler :: Sock.Socket -> ServerApp
 handler sock pending = do
   putStrLn "got connection"

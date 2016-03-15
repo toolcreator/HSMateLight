@@ -16,7 +16,7 @@
       };
       connection.onmessage = function(msg) {
         var data = new Uint8Array(msg.data);
-        console.log('WSMessage received ' + data.length / 3 + ' bytes');
+        console.log('WSMessage received ' + data.length / 3 + ' pixels');
         for (var i = 0; i < data.length / 3; i += 1) {
           imgData.data[4 * i + 0]=data[3 * i + 0];
           imgData.data[4 * i + 1]=data[3 * i + 1];
