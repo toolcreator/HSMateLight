@@ -4,7 +4,6 @@ import qualified Network.Socket.ByteString.Lazy as NBSL
 import qualified Data.ByteString.Lazy as BSL
 import Control.Monad
 
--- what on connection close?
 handler :: Sock.Socket -> ServerApp
 handler sock pending = do
   putStrLn "got connection"
@@ -14,10 +13,16 @@ handler sock pending = do
     bs <- NBSL.recv sock 4096
     sendBinaryData conn bs
 
+-- use bracket for close...
 main :: IO ()
 main = Sock.withSocketsDo $ do
   socket <- Sock.socket Sock.AF_INET Sock.Datagram Sock.defaultProtocol
   addr <- Sock.inet_addr "127.0.0.1"
   Sock.bind socket (Sock.SockAddrInet (fromIntegral 1337) addr)
-  runServer "127.0.0.1" 8080 $ handler socket
+  websocket <- makeListenSocket "127.0.0.1" 8080
+  (conn, _) <- Sock.accept websocket
+  pending <- makePendingConnection conn (ConnectionOptions (return ()))
+  handler socket pending
+  Sock.close conn
+  Sock.close websocket
   Sock.close socket
