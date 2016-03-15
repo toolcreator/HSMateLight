@@ -3,21 +3,6 @@ import ListFrame
 
 import Data.Maybe
 
-testframe1 :: ListFrame
-testframe1 = ListFrame $ concat $ replicate 8 [black, white]
-  where
-  white = replicate 40 (Pixel 0xff 0xff 0xff)
-  black = replicate 40 (Pixel 0 0 0)
-testframe2 :: ListFrame
-testframe2 = ListFrame $ concat $ replicate 8 [white, black]
-  where
-  white = replicate 40 (Pixel 0x0 0xff 0xff)
-  black = replicate 40 (Pixel 0 0 0)
-
-testfkt :: (Int, Int) -> [Event] -> Bool -> (ListFrame, Bool)
-testfkt _dim _evs s | s = (testframe1, not s)
-                    | otherwise = (testframe2, not s)
-
 move :: (Int, Int) -> String -> (Int, Int) -> (Int, Int)
 move (xdim, ydim) "j" (x, y) = (x, (y + 1) `mod` ydim)
 move (xdim, ydim) "k" (x, y) = (x, (y - 1) `mod` ydim)
