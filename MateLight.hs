@@ -75,6 +75,7 @@ runMateM conf fkt s = do
   forkIO $ (if cSynchronized conf then acumulatingCaller else caller) sock chanStepper chanEvent undefined s
   do -- this whole do block stinks, but then so does capturing keyboard events
     hSetBuffering stdin NoBuffering
+    hSetEcho stdin False
     atomically (dupTChan chanEvent) >>= \ch -> forever $ do
       c <- getChar
       atomically $ writeTChan ch $ Event "KEYBOARD" [c]
