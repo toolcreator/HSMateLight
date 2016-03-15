@@ -18,4 +18,4 @@ eventTest dim events pixel = (toFrame dim pixel', pixel')
   where pixel' = foldl (\acc (Event mod ev) -> if mod == "KEYBOARD" then move dim ev acc else acc) pixel events
 
 main :: IO ()
-main = runMate (Config (fromJust $ parseAddress "127.0.0.1") 1337 (40, 16) Nothing False []) eventTest (0, 0)
+main = runMate (Config (fromJust $ parseAddress "127.0.0.1") 1337 (40, 16) (Just 1000000) False []) eventTest (0, 0)
