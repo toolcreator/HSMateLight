@@ -21,6 +21,10 @@ import Control.Concurrent.Chan
 import Control.Concurrent.STM
 import Control.Concurrent.STM.TChan
 
+{-
+ - TODO: Exception handling?
+ -}
+
 class Frame f where
   theData :: f -> BSL.ByteString
   dimension :: f -> (Int, Int)
@@ -79,7 +83,7 @@ runMateM conf fkt s = do
     atomically (dupTChan chanEvent) >>= \ch -> forever $ do
       c <- getChar
       atomically $ writeTChan ch $ Event "KEYBOARD" [c]
-  Sock.close sock
+  Sock.close sock -- use bracket
   where
   stepper :: Int -> Chan () -> IO ()
   stepper delay chan = do
