@@ -14,7 +14,7 @@ move _ _ x = x
 toFrame :: (Int, Int) -> (Int, Int) -> ListFrame
 toFrame (xdim, ydim) (x', y') = ListFrame $ map (\y -> map (\x -> if x == x' && y == y' then Pixel 0xff 0xff 0xff else Pixel 0 0 0) [0 .. xdim - 1]) [0 .. ydim - 1]
 
-eventTest :: (Int, Int) -> [Event] -> (Int, Int) -> (ListFrame, (Int, Int))
+eventTest :: (Int, Int) -> [Event String] -> (Int, Int) -> (ListFrame, (Int, Int))
 eventTest dim events pixel = (toFrame dim pixel', pixel')
   where pixel' = foldl (\acc (Event mod ev) -> if mod == "KEYBOARD" then move dim ev acc else acc) pixel events
 

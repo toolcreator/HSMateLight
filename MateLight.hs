@@ -1,12 +1,16 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving,RankNTypes,ScopedTypeVariables #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving,RankNTypes,ScopedTypeVariables,ExistentialQuantification #-}
 module MateLight (
-   EventProvider
+   EventProviderT
   ,parseAddress
   ,Config(..)
   ,runMate
   ,runMateM
   ,Frame(..)
+  ,EventT(..)
   ,Event(..)
+  ,castEvent
+  ,stringEvent
+  ,MateMonad()
   ) where
 import Data.Word
 import System.IO
@@ -20,18 +24,27 @@ import Control.Concurrent
 import Control.Concurrent.Chan
 import Control.Concurrent.STM
 import Control.Concurrent.STM.TChan
+import Data.Typeable
 
 {-
  - TODO: Exception handling?
+ - -- change the whole dimension thing
  -}
 
 class Frame f where
   theData :: f -> BSL.ByteString
   dimension :: f -> (Int, Int)
 
-data Event = Event String String deriving (Eq, Ord, Show, Read)
+data EventT = forall a. (Typeable a, Show a) => EventT String a
+instance Show EventT where
+  show (EventT mod a) = "Event " ++ show mod ++ " " ++ show a
+data Event a = Event String a deriving (Eq, Ord, Show, Read)
+castEvent :: Typeable a => EventT -> Maybe (Event a)
+castEvent (EventT mod a) = Event mod `fmap` cast a
+stringEvent :: EventT -> Event String
+stringEvent (EventT mod a) = Event mod $ show a
 
-type EventProvider = TChan Event -> IO ()
+type EventProviderT = TChan EventT -> IO ()
 
 data Config = Config {
    cAddr :: IP
@@ -39,15 +52,16 @@ data Config = Config {
   ,cDimension :: (Int, Int)
   ,cStepTime :: Maybe Int
   ,cSynchronized :: Bool -- aggregate events, send only at step
-  ,cEventProviders :: [EventProvider]
+  ,cEventProviders :: [EventProviderT]
 }
 
 parseAddress :: String -> Maybe IP
 parseAddress str = maybe (IPv4 `fmap` (readMaybe str :: Maybe IPv4)) (fmap IPv6) (readMaybe str)
   where readMaybe str = case reads str of { [(a, "")] -> Just a; _ -> Nothing }
 
-runMate :: (Frame f) => Config -> ((Int, Int) -> [Event] -> s -> (f, s)) -> s -> IO ()
-runMate conf fkt stat = runMateM conf ((state .) . fkt) stat
+runMate :: (Frame f) => Config -> ((Int, Int) -> [Event String] -> s -> (f, s)) -> s -> IO ()
+runMate conf fkt = runMateM conf $ \dim -> state . fkt dim . map stringEvent
+--runMateM conf ((state .) . fkt) stat
 
 newtype MateMonad f s m a = MateMonad {
   unMateMonad :: (StateT s (ReaderT f m) a)
@@ -63,7 +77,7 @@ whileM cond action = do
    else
     return []
 
-runMateM :: forall f s . (Frame f) => Config -> ((Int, Int) -> [Event] -> MateMonad f s IO f) -> s -> IO ()
+runMateM :: forall f s . (Frame f) => Config -> ((Int, Int) -> [EventT] -> MateMonad f s IO f) -> s -> IO ()
 runMateM conf fkt s = do
   -- Change socket code
   sock <- Sock.socket Sock.AF_INET Sock.Datagram Sock.defaultProtocol 
@@ -74,7 +88,7 @@ runMateM conf fkt s = do
   case cStepTime conf of
     Nothing -> return ()
     Just time -> dupChan chanStepper >>= forkIO . stepper time >> return ()
-  chanEvent <- newTChanIO :: IO (TChan Event)
+  chanEvent <- newTChanIO :: IO (TChan EventT)
   forM_ (cEventProviders conf) $ \ep -> atomically (dupTChan chanEvent) >>= forkIO . ep
   forkIO $ (if cSynchronized conf then acumulatingCaller else caller) sock chanStepper chanEvent undefined s
   do -- this whole do block stinks, but then so does capturing keyboard events
@@ -82,7 +96,7 @@ runMateM conf fkt s = do
     hSetEcho stdin False
     atomically (dupTChan chanEvent) >>= \ch -> forever $ do
       c <- getChar
-      atomically $ writeTChan ch $ Event "KEYBOARD" [c]
+      atomically $ writeTChan ch $ EventT "KEYBOARD" [c]
   Sock.close sock -- use bracket
   where
   stepper :: Int -> Chan () -> IO ()
@@ -90,16 +104,16 @@ runMateM conf fkt s = do
     writeChan chan ()
     threadDelay delay
     stepper delay chan
-  acumulatingCaller :: Sock.Socket -> Chan () -> TChan Event -> f -> s -> IO ()
+  acumulatingCaller :: Sock.Socket -> Chan () -> TChan EventT -> f -> s -> IO ()
   acumulatingCaller sock chanStepper chanEvent oldFrame curState = do
     () <- readChan chanStepper
     events <- atomically $ whileM (not `fmap` isEmptyTChan chanEvent) (readTChan chanEvent)
     (newFrame, newState) <- runReaderT (runStateT (unMateMonad (fkt (cDimension conf) events)) curState) oldFrame :: IO (f, s)
     sendFrame sock newFrame
     acumulatingCaller sock chanStepper chanEvent newFrame newState
-  caller :: Sock.Socket -> Chan () -> TChan Event -> f -> s -> IO ()
+  caller :: Sock.Socket -> Chan () -> TChan EventT -> f -> s -> IO ()
   caller sock chanStepper chanEvent oldFrame oldState = do
-    unitedChan <- newChan :: IO (Chan (Either () Event))
+    unitedChan <- newChan :: IO (Chan (Either () EventT))
     dupChan unitedChan >>= \dupped -> forkIO $ forever $ do
       () <- readChan chanStepper
       writeChan dupped $ Left ()
