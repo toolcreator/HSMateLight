@@ -1,4 +1,4 @@
-import MateLight
+import Simple
 import ListFrame
 
 import Data.Maybe

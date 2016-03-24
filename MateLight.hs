@@ -3,13 +3,9 @@ module MateLight (
    EventProviderT
   ,parseAddress
   ,Config(..)
-  ,runMate
   ,runMateM
   ,Frame(..)
   ,EventT(..)
-  ,Event(..)
-  ,castEvent
-  ,stringEvent
   ,MateMonad()
   ) where
 import Data.Word
@@ -38,11 +34,6 @@ class Frame f where
 data EventT = forall a. (Typeable a, Show a) => EventT String a
 instance Show EventT where
   show (EventT mod a) = "Event " ++ show mod ++ " " ++ show a
-data Event a = Event String a deriving (Eq, Ord, Show, Read)
-castEvent :: Typeable a => EventT -> Maybe (Event a)
-castEvent (EventT mod a) = Event mod `fmap` cast a
-stringEvent :: EventT -> Event String
-stringEvent (EventT mod a) = Event mod $ show a
 
 type EventProviderT = TChan EventT -> IO ()
 
@@ -58,9 +49,6 @@ data Config = Config {
 parseAddress :: String -> Maybe IP
 parseAddress str = maybe (IPv4 `fmap` (readMaybe str :: Maybe IPv4)) (fmap IPv6) (readMaybe str)
   where readMaybe str = case reads str of { [(a, "")] -> Just a; _ -> Nothing }
-
-runMate :: (Frame f) => Config -> ([Event String] -> s -> (f, s)) -> s -> IO ()
-runMate conf fkt = runMateM conf $ state . fkt . map stringEvent
 
 newtype MateMonad f s m a = MateMonad {
   unMateMonad :: (StateT s (ReaderT f m) a)
