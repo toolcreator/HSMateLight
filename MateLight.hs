@@ -59,9 +59,8 @@ parseAddress :: String -> Maybe IP
 parseAddress str = maybe (IPv4 `fmap` (readMaybe str :: Maybe IPv4)) (fmap IPv6) (readMaybe str)
   where readMaybe str = case reads str of { [(a, "")] -> Just a; _ -> Nothing }
 
-runMate :: (Frame f) => Config -> ((Int, Int) -> [Event String] -> s -> (f, s)) -> s -> IO ()
-runMate conf fkt = runMateM conf $ \dim -> state . fkt dim . map stringEvent
---runMateM conf ((state .) . fkt) stat
+runMate :: (Frame f) => Config -> ([Event String] -> s -> (f, s)) -> s -> IO ()
+runMate conf fkt = runMateM conf $ state . fkt . map stringEvent
 
 newtype MateMonad f s m a = MateMonad {
   unMateMonad :: (StateT s (ReaderT f m) a)
@@ -77,7 +76,7 @@ whileM cond action = do
    else
     return []
 
-runMateM :: forall f s . (Frame f) => Config -> ((Int, Int) -> [EventT] -> MateMonad f s IO f) -> s -> IO ()
+runMateM :: forall f s . (Frame f) => Config -> ([EventT] -> MateMonad f s IO f) -> s -> IO ()
 runMateM conf fkt s = do
   -- Change socket code
   sock <- Sock.socket Sock.AF_INET Sock.Datagram Sock.defaultProtocol 
@@ -108,7 +107,7 @@ runMateM conf fkt s = do
   acumulatingCaller sock chanStepper chanEvent oldFrame curState = do
     () <- readChan chanStepper
     events <- atomically $ whileM (not `fmap` isEmptyTChan chanEvent) (readTChan chanEvent)
-    (newFrame, newState) <- runReaderT (runStateT (unMateMonad (fkt (cDimension conf) events)) curState) oldFrame :: IO (f, s)
+    (newFrame, newState) <- runReaderT (runStateT (unMateMonad (fkt events)) curState) oldFrame :: IO (f, s)
     sendFrame sock newFrame
     acumulatingCaller sock chanStepper chanEvent newFrame newState
   caller :: Sock.Socket -> Chan () -> TChan EventT -> f -> s -> IO ()
@@ -122,7 +121,7 @@ runMateM conf fkt s = do
       writeChan dupped $ Right event
     let helper oldFrame curState = do
           msg <- readChan unitedChan
-          (newFrame, newState) <- runReaderT (runStateT (unMateMonad (fkt (cDimension conf) [ev | Right ev <- [msg]])) curState) oldFrame :: IO (f, s)
+          (newFrame, newState) <- runReaderT (runStateT (unMateMonad (fkt [ev | Right ev <- [msg]])) curState) oldFrame :: IO (f, s)
           sendFrame sock newFrame
           helper newFrame newState
     helper oldFrame oldState
