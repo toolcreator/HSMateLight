@@ -5,10 +5,10 @@ import Data.Maybe
 import qualified Network.Socket as Sock
 
 move :: (Int, Int) -> String -> (Int, Int) -> (Int, Int)
-move (xdim, ydim) "j" (x, y) = (x, (y + 1) `mod` ydim)
-move (xdim, ydim) "k" (x, y) = (x, (y - 1) `mod` ydim)
-move (xdim, ydim) "h" (x, y) = ((x - 1) `mod` xdim, y)
-move (xdim, ydim) "l" (x, y) = ((x + 1) `mod` xdim, y)
+move (xdim, ydim) "\"j\"" (x, y) = (x, (y + 1) `mod` ydim)
+move (xdim, ydim) "\"k\"" (x, y) = (x, (y - 1) `mod` ydim)
+move (xdim, ydim) "\"h\"" (x, y) = ((x - 1) `mod` xdim, y)
+move (xdim, ydim) "\"l\"" (x, y) = ((x + 1) `mod` xdim, y)
 move _ _ x = x
 
 toFrame :: (Int, Int) -> (Int, Int) -> ListFrame
