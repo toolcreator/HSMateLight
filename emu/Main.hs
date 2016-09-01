@@ -4,6 +4,7 @@ import qualified Network.WebSockets.Stream as WStream
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as NBS
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import Control.Monad
 import Control.Concurrent
 import Control.Concurrent.STM (atomically)
@@ -14,6 +15,9 @@ import System.IO.Unsafe (unsafePerformIO)
 import Data.Maybe
 import Data.Foldable
 import System.IO (Handle, hPutStrLn, stdin, stdout, stderr)
+import Data.Bits
+import Data.Word
+import Test.QuickCheck
 
 logLock :: MVar ()
 logLock = unsafePerformIO $ newMVar ()
@@ -22,36 +26,110 @@ mHPutStrLn :: Handle -> String -> IO ()
 mHPutStrLn handle str = withMVar logLock (\() -> hPutStrLn handle str)
 mPutStrLn = mHPutStrLn stdout
 
-data Message = Message {
+data Frame = Frame {
    source :: Sock.SockAddr
   ,message :: BS.ByteString
-} deriving Show
+} deriving (Show, Eq)
 
-mAccept :: Sock.Socket -> IO (TVar (Maybe (TChan Message)))
-mAccept websocket = do
+instance Arbitrary Sock.SockAddr where
+  arbitrary = oneof [inet, inet6]
+    where
+    inet = arbitrary >>= \(pn :: Word16) -> arbitrary >>= \ha -> return $ Sock.SockAddrInet (fromIntegral pn) ha
+    inet6 = arbitrary >>= \(pn :: Word16) -> arbitrary >>= \fi -> arbitrary >>= \ha -> arbitrary >>= \si -> return $ Sock.SockAddrInet6 (fromIntegral pn) fi ha si
+instance Arbitrary Message where -- tests only MCUpdate
+  arbitrary = MCUpdate `fmap` arbitrary
+prop_sockLength sa@(Sock.SockAddrInet _ _) = BSL.length (WSock.toLazyByteString sa) == 7
+prop_sockLength sa@(Sock.SockAddrInet6 _ _ _ _) = BSL.length (WSock.toLazyByteString sa) == 27
+prop_sock sa = WSock.fromLazyByteString (WSock.toLazyByteString sa) == (sa :: Sock.SockAddr)
+prop_sockAddrLst msg = WSock.fromLazyByteString (WSock.toLazyByteString msg) == (msg :: Message)
+
+data Message = MFrame Frame | MCUpdate [Sock.SockAddr] deriving (Show, Eq)
+instance WSock.WebSocketsData Message where
+  fromLazyByteString bs | BSL.length bs > 0 && BSL.head bs == 0 = MFrame $ Frame (error "no sockAddr") $ BSL.toStrict $ BSL.tail bs
+  fromLazyByteString bs | BSL.length bs > 0 && BSL.head bs == 1 = MCUpdate $ map WSock.fromLazyByteString $ split tl
+    where
+    tl = BSL.tail bs
+    split bs | BSL.null bs = []
+            | BSL.length bs >= 7 && BSL.head bs == 0 = BSL.take 7 bs : split (BSL.drop 7 bs)
+            | BSL.length bs >= 27 && BSL.head bs == 1 = BSL.take 27 bs : split (BSL.drop 27 bs)
+  toLazyByteString (MFrame frame) = 0 `BSL.cons` BSL.fromStrict (message frame)
+  toLazyByteString (MCUpdate clients) = 1 `BSL.cons` BSL.concat (map WSock.toLazyByteString clients)
+
+isInetBS :: BSL.ByteString -> Bool
+isInetBS bs = BSL.length bs == 7 && BSL.head bs == 0
+isInet6BS :: BSL.ByteString -> Bool
+isInet6BS bs = BSL.length bs == 27 && BSL.head bs == 1
+
+instance WSock.WebSocketsData Sock.SockAddr where
+  fromLazyByteString bs | isInetBS bs = Sock.SockAddrInet pn ha
+    where
+    [pn1, pn0, ha3, ha2, ha1, ha0] = BSL.unpack $ BSL.tail bs
+    pn = fromIntegral (bytesToWord $ [pn1, pn0] :: Word16)
+    ha = bytesToWord [ha3, ha2, ha1, ha0]
+  fromLazyByteString bs | isInet6BS bs = Sock.SockAddrInet6 pn fi ha si
+    where
+    rs = BSL.unpack $ BSL.tail bs
+    pn = fromIntegral $ (bytesToWord $ take 2 rs :: Word16)
+    fi = bytesToWord $ take 4 $ drop 2 rs
+    [ha15, ha14, ha13, ha12, ha11, ha10, ha9, ha8, ha7, ha6, ha5, ha4, ha3, ha2, ha1, ha0] = take 16 $ drop 6 rs
+    ha = (bytesToWord [ha15, ha14, ha13, ha12], bytesToWord [ha11, ha10, ha9, ha8], bytesToWord [ha7, ha6, ha5, ha4], bytesToWord [ha3, ha2, ha1, ha0])
+    si = bytesToWord $ drop 22 rs
+  toLazyByteString (Sock.SockAddrInet pn ha) = 0 `BSL.cons` BSL.append bsPn bsHa
+    where
+    bsPn = BSL.pack $ wordToBytes (fromIntegral pn :: Word16)
+    bsHa = BSL.pack $ wordToBytes ha
+  toLazyByteString (Sock.SockAddrInet6 pn fi (ha3, ha2, ha1, ha0) si) = 1 `BSL.cons` BSL.concat [bsPn, bsFi, bsHa, bsSi]
+    where
+    bsPn = BSL.pack $ wordToBytes (fromIntegral pn :: Word16)
+    bsFi = BSL.pack $ wordToBytes fi
+    bsHa = BSL.pack $ concatMap wordToBytes [ha3, ha2, ha1, ha0]
+    bsSi = BSL.pack $ wordToBytes si
+
+-- to not use BS builder because of two way requirement
+wordToBytes :: (FiniteBits a, Integral a) => a -> [Word8]
+wordToBytes w = map (\i -> fromIntegral $ w `shiftR` (i * 8)) [byteSize -1 , byteSize - 2 .. 0]
+  where byteSize = finiteBitSize w `div` 8
+bytesToWord :: forall a. (FiniteBits a, Integral a) => [Word8] -> a
+bytesToWord = fst . foldr (\b (r, c) -> (r .|. fromIntegral b `shiftL` c :: a, c + 8)) (0 :: a, 0 :: Int)
+
+newDisplay :: Sock.Socket -> TVar [(Bool, Sock.SockAddr)] -> IO (TVar (Maybe (TChan Frame)))
+newDisplay websocket clients = do
   (conn, _) <- Sock.accept websocket
   pending <- WSock.makePendingConnection conn (WSock.ConnectionOptions (return ()))
   chan <- newTChanIO
   mvchan <- newTVarIO $ Just chan
+  activeAddress <- atomically $ readTVar clients >>= \cs -> case cs of { [(_, c)] -> newTVar $ Just c; _ -> newTVar Nothing }
   tidrMVar <- newEmptyMVar
   tidsMVar <- newEmptyMVar
   mPutStrLn "got connection"
   wconn <- WSock.acceptRequest pending
+  sendLock <- newMVar ()
+  let wSend msg = withMVar sendLock (\() -> WSock.sendBinaryData wconn (msg :: Message))
+  tidUpdater <- forkIO $ forever $ do
+    cs <- atomically $ readTVar clients
+    wSend $ MCUpdate $ map snd cs
+    threadDelay 1000000
 
   let receiver = handle (\(e :: WSock.ConnectionException) -> mPutStrLn ("received exception in receiver: " ++ show e ++ " -> closing") >> closeMVar tidsMVar) $ do
         msg <- WSock.receive wconn
-        mPutStrLn $ "received message " ++ show msg
         case msg of
-          WSock.ControlMessage (WSock.Close _ _) -> closeMVar tidsMVar
-          _ -> receiver
+          WSock.ControlMessage (WSock.Close _ _) -> mPutStrLn "received close message" >> closeMVar tidsMVar
+          WSock.DataMessage (WSock.Binary bs) | isInetBS bs || isInet6BS bs -> do
+            let addr = WSock.fromLazyByteString bs :: Sock.SockAddr
+            mPutStrLn $ "received update: " ++ show addr
+            atomically $ writeTVar activeAddress $ Just addr
+            receiver
+          _ -> mPutStrLn "unrecognized message received" >> receiver
       sender = handle (\(e :: WSock.ConnectionException) -> mPutStrLn ("received exception in sender: " ++ show e ++ " -> closing") >> closeMVar tidrMVar) $ do
-        bs <- atomically $ readTChan chan
-        WSock.sendBinaryData wconn $ message bs -- client can filter here by socksaddr
+        msg <- atomically $ readTChan chan
+        sockAddr <- atomically $ readTVar activeAddress
+        when (sockAddr == Just (source msg)) $ wSend $ MFrame msg
         sender
       closeMVar mvar = do
         tid <- readMVar mvar
         atomically $ modifyTVar mvchan (\_ -> Nothing)
         killThread tid
+        killThread tidUpdater
         Sock.close conn
 
   tidr <- forkIO receiver
@@ -60,8 +138,8 @@ mAccept websocket = do
   putMVar tidsMVar tids
   return mvchan
 
-receive :: Sock.Socket -> IO Message
-receive udpSocket = uncurry (flip Message) `fmap` NBS.recvFrom udpSocket 4096
+receive :: Sock.Socket -> IO Frame
+receive udpSocket = uncurry (flip Frame) `fmap` NBS.recvFrom udpSocket 4096
 
 -- use bracket for close...
 main :: IO ()
@@ -69,7 +147,7 @@ main = Sock.withSocketsDo $ bracket mkSocks (\(a, b) -> Sock.close a >> Sock.clo
   displays <- newTVarIO []
   clients <- newTVarIO []
   forkIO $ forever $ do
-    display <- mAccept websocket
+    display <- newDisplay websocket clients
     atomically $ modifyTVar displays (display :)
   masterChan <- newChan
   forkIO $ forever $ do
@@ -88,7 +166,7 @@ main = Sock.withSocketsDo $ bracket mkSocks (\(a, b) -> Sock.close a >> Sock.clo
   forever $ do
     disps <- atomically $ readTVar displays
     cs <- atomically $ readTVar clients
-    mPutStrLn $ "number of displays = " ++ show (length disps) ++ "\nnumber of clients = " ++ show (length cs)
+    mPutStrLn $ "number of displays = " ++ show (length disps) ++ "\nnumber of clients = " ++ show (length cs) ++ "\nclients = " ++ show cs
     threadDelay 1000000
   {-
    -forever $ do
