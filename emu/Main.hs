@@ -118,6 +118,7 @@ newDisplay websocket clients = do
             let addr = WSock.fromLazyByteString bs :: Sock.SockAddr
             mPutStrLn $ "received update: " ++ show addr
             atomically $ writeTVar activeAddress $ Just addr
+            threadDelay 10000
             receiver
           _ -> mPutStrLn "unrecognized message received" >> receiver
       sender = handle (\(e :: WSock.ConnectionException) -> mPutStrLn ("received exception in sender: " ++ show e ++ " -> closing") >> closeMVar tidrMVar) $ do
@@ -139,11 +140,10 @@ newDisplay websocket clients = do
   return mvchan
 
 receive :: Sock.Socket -> IO Frame
-receive udpSocket = uncurry (flip Frame) `fmap` NBS.recvFrom udpSocket 4096
+receive udpSocket = uncurry (flip Frame) `fmap` NBS.recvFrom udpSocket 2048
 
--- use bracket for close...
 main :: IO ()
-main = Sock.withSocketsDo $ bracket mkSocks (\(a, b) -> Sock.close a >> Sock.close b) $ \(websocket, udpSocket) -> do
+main = Sock.withSocketsDo $ bracket (mkSock Sock.Datagram "0.0.0.0" 1337) Sock.close $ \udpSocket -> bracket (mkSock Sock.Stream "0.0.0.0" 8080) Sock.close $ \websocket -> do
   displays <- newTVarIO []
   clients <- newTVarIO []
   forkIO $ forever $ do
@@ -168,15 +168,6 @@ main = Sock.withSocketsDo $ bracket mkSocks (\(a, b) -> Sock.close a >> Sock.clo
     cs <- atomically $ readTVar clients
     mPutStrLn $ "number of displays = " ++ show (length disps) ++ "\nnumber of clients = " ++ show (length cs) ++ "\nclients = " ++ show cs
     threadDelay 1000000
-  {-
-   -forever $ do
-   -  let black = Message undefined $ BS.pack $ replicate (40*16*3) 0
-   -      white = Message undefined $ BS.pack $ replicate (40*16*3) 0xff
-   -  threadDelay 50000
-   -  writeChan masterChan black
-   -  threadDelay 50000
-   -  writeChan masterChan white
-   -}
   where
   send displays bs = readTVar displays >>= foldrM (\d acc -> readTVar d >>= maybe (return acc) (\c -> writeTChan c bs >> return (d : acc))) [] >>= writeTVar displays
   cleanupDisplays displays = readTVar displays >>= filterM (fmap isJust . readTVar) >>= writeTVar displays
@@ -186,9 +177,8 @@ main = Sock.withSocketsDo $ bracket mkSocks (\(a, b) -> Sock.close a >> Sock.clo
     helper [] = [(True, sockAddr)]
     helper (c@(seen, addr):cs) | addr == sockAddr = (True, addr) : cs
                                | otherwise = c : helper cs
-  mkSocks = do
-    udpSocket <- Sock.socket Sock.AF_INET Sock.Datagram Sock.defaultProtocol
-    addr <- Sock.inet_addr "127.0.0.1"
-    Sock.bind udpSocket (Sock.SockAddrInet (fromIntegral 1337) addr)
-    websocket <- WSock.makeListenSocket "127.0.0.1" 8080
-    return (websocket, udpSocket)
+  mkSock ptype addr port = do
+    socket <- Sock.socket Sock.AF_INET ptype Sock.defaultProtocol
+    addr <- Sock.inet_addr addr
+    Sock.bind socket (Sock.SockAddrInet (fromIntegral port) addr)
+    return socket
