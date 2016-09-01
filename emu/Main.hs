@@ -144,6 +144,7 @@ receive udpSocket = uncurry (flip Frame) `fmap` NBS.recvFrom udpSocket 2048
 
 main :: IO ()
 main = Sock.withSocketsDo $ bracket (mkSock Sock.Datagram "0.0.0.0" 1337) Sock.close $ \udpSocket -> bracket (mkSock Sock.Stream "0.0.0.0" 8080) Sock.close $ \websocket -> do
+  Sock.listen websocket 5
   displays <- newTVarIO []
   clients <- newTVarIO []
   forkIO $ forever $ do
