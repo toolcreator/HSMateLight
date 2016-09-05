@@ -19,6 +19,7 @@ import Data.Bits
 import Data.Word
 import Test.QuickCheck
 
+{-# NOINLINE logLock #-}
 logLock :: MVar ()
 logLock = unsafePerformIO $ newMVar ()
 
