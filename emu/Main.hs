@@ -95,57 +95,67 @@ bytesToWord = fst . foldr (\b (r, c) -> (r .|. fromIntegral b `shiftL` c :: a, c
 
 newDisplay :: Sock.Socket -> TVar [(Bool, Sock.SockAddr)] -> IO (TVar (Maybe (TChan Frame)))
 newDisplay websocket clients = do
+  mHPutStrLn stderr "at accept websocket conn"
   (conn, _) <- Sock.accept websocket
-  pending <- WSock.makePendingConnection conn (WSock.ConnectionOptions (return ()))
-  chan <- newTChanIO
-  mvchan <- newTVarIO $ Just chan
-  activeAddress <- atomically $ readTVar clients >>= \cs -> case cs of { [(_, c)] -> newTVar $ Just c; _ -> newTVar Nothing }
-  tidrMVar <- newEmptyMVar
-  tidsMVar <- newEmptyMVar
-  mPutStrLn "got connection"
-  wconn <- WSock.acceptRequest pending
-  sendLock <- newMVar ()
-  let wSend msg = withMVar sendLock (\() -> WSock.sendBinaryData wconn (msg :: Message))
-  tidUpdater <- forkIO $ forever $ do
-    cs <- atomically $ readTVar clients
-    wSend $ MCUpdate $ map snd cs
-    threadDelay 1000000
+  mHPutStrLn stderr "done accepting websocket conn"
+  wconnMb <- try $ WSock.makePendingConnection conn (WSock.ConnectionOptions (return ())) >>= WSock.acceptRequest
+  case wconnMb of
+    Left (e :: WSock.HandshakeException) -> do
+      Sock.close conn
+      mHPutStrLn stderr ("handshake exception: " ++ show e)
+      newTVarIO Nothing
+    Right wconn -> do
+      chan <- newTChanIO
+      mvchan <- newTVarIO $ Just chan
+      activeAddress <- atomically $ readTVar clients >>= \cs -> case cs of { [(_, c)] -> newTVar $ Just c; _ -> newTVar Nothing }
+      tidrMVar <- newEmptyMVar
+      tidsMVar <- newEmptyMVar
+      mPutStrLn "got connection"
+      sendLock <- newMVar ()
+      let wSend msg = withMVar sendLock (\() -> WSock.sendBinaryData wconn (msg :: Message))
+      tidUpdater <- forkIO $ forever $ do
+        cs <- atomically $ readTVar clients
+        wSend $ MCUpdate $ map snd cs
+        threadDelay 1000000
 
-  let receiver = handle (\(e :: WSock.ConnectionException) -> mPutStrLn ("received exception in receiver: " ++ show e ++ " -> closing") >> closeMVar tidsMVar) $ do
-        msg <- WSock.receive wconn
-        case msg of
-          WSock.ControlMessage (WSock.Close _ _) -> mPutStrLn "received close message" >> closeMVar tidsMVar
-          WSock.DataMessage (WSock.Binary bs) | isInetBS bs || isInet6BS bs -> do
-            let addr = WSock.fromLazyByteString bs :: Sock.SockAddr
-            mPutStrLn $ "received update: " ++ show addr
-            atomically $ writeTVar activeAddress $ Just addr
-            threadDelay 10000
-            receiver
-          _ -> mPutStrLn "unrecognized message received" >> receiver
-      sender = handle (\(e :: WSock.ConnectionException) -> mPutStrLn ("received exception in sender: " ++ show e ++ " -> closing") >> closeMVar tidrMVar) $ do
-        msg <- atomically $ readTChan chan
-        sockAddr <- atomically $ readTVar activeAddress
-        when (sockAddr == Just (source msg)) $ wSend $ MFrame msg
-        sender
-      closeMVar mvar = do
-        tid <- readMVar mvar
-        atomically $ modifyTVar mvchan (\_ -> Nothing)
-        killThread tid
-        killThread tidUpdater
-        Sock.close conn
+      let receiver = handle (\(e :: WSock.ConnectionException) -> mPutStrLn ("received exception in receiver: " ++ show e ++ " -> closing") >> closeMVar tidsMVar) $ do
+            msg <- WSock.receive wconn
+            case msg of
+              WSock.ControlMessage (WSock.Close _ _) -> mPutStrLn "received close message" >> closeMVar tidsMVar
+              WSock.DataMessage (WSock.Binary bs) | isInetBS bs || isInet6BS bs -> do
+                let addr = WSock.fromLazyByteString bs :: Sock.SockAddr
+                mPutStrLn $ "received update: " ++ show addr
+                atomically $ writeTVar activeAddress $ Just addr
+                threadDelay 10000
+                receiver
+              _ -> mPutStrLn "unrecognized message received" >> receiver
+          sender = handle (\(e :: WSock.ConnectionException) -> mPutStrLn ("received exception in sender: " ++ show e ++ " -> closing") >> closeMVar tidrMVar) $ do
+            msg <- atomically $ readTChan chan
+            sockAddr <- atomically $ readTVar activeAddress
+            when (sockAddr == Just (source msg)) $ wSend $ MFrame msg
+            sender
+          closeMVar mvar = do
+            tid <- readMVar mvar
+            atomically $ modifyTVar mvchan (\_ -> Nothing)
+            killThread tid
+            killThread tidUpdater
+            Sock.close conn
 
-  tidr <- forkIO receiver
-  putMVar tidrMVar tidr
-  tids <- forkIO sender
-  putMVar tidsMVar tids
-  return mvchan
+      tidr <- forkIO receiver
+      putMVar tidrMVar tidr
+      tids <- forkIO sender
+      putMVar tidsMVar tids
+      return mvchan
 
 receive :: Sock.Socket -> IO Frame
 receive udpSocket = uncurry (flip Frame) `fmap` NBS.recvFrom udpSocket 2048
 
+-- Use System.Timeout
 main :: IO ()
 main = Sock.withSocketsDo $ bracket (mkSock Sock.Datagram "0.0.0.0" 1337) Sock.close $ \udpSocket -> bracket (mkSock Sock.Stream "0.0.0.0" 8080) Sock.close $ \websocket -> do
   Sock.listen websocket 5
+  Sock.setSocketOption websocket Sock.ReuseAddr 1
+  Sock.setSocketOption websocket Sock.NoDelay 1
   displays <- newTVarIO []
   clients <- newTVarIO []
   forkIO $ forever $ do
