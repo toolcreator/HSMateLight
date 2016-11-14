@@ -14,10 +14,12 @@ import Control.Exception
 import System.IO.Unsafe (unsafePerformIO)
 import Data.Maybe
 import Data.Foldable
-import System.IO (Handle, hPutStrLn, stdin, stdout, stderr)
+import System.IO (Handle, hPutStrLn, stdin, stdout, stderr, hSetBuffering, BufferMode(NoBuffering))
 import Data.Bits
 import Data.Word
 import Test.QuickCheck
+import qualified DropPriv as Priv
+import qualified System.Posix.Signals as Signals
 
 {-# NOINLINE logLock #-}
 logLock :: MVar ()
@@ -98,11 +100,13 @@ newDisplay websocket clients = do
   mHPutStrLn stderr "at accept websocket conn"
   (conn, _) <- Sock.accept websocket
   mHPutStrLn stderr "done accepting websocket conn"
-  wconnMb <- try $ WSock.makePendingConnection conn (WSock.ConnectionOptions (return ())) >>= WSock.acceptRequest
+  wconnMb <- (WSock.makePendingConnection conn (WSock.ConnectionOptions (return ())) >>= fmap Right . WSock.acceptRequest) `catches` [
+              Handler $ \(e :: WSock.HandshakeException) -> return $ Left $ show e
+             ,Handler $ \(e :: WSock.ConnectionException) -> return $ Left $ show e]
   case wconnMb of
-    Left (e :: WSock.HandshakeException) -> do
+    Left e -> do
       Sock.close conn
-      mHPutStrLn stderr ("handshake exception: " ++ show e)
+      mHPutStrLn stderr ("handshake exception: " ++ e)
       newTVarIO Nothing
     Right wconn -> do
       chan <- newTChanIO
@@ -153,9 +157,16 @@ receive udpSocket = uncurry (flip Frame) `fmap` NBS.recvFrom udpSocket 2048
 -- Use System.Timeout
 main :: IO ()
 main = Sock.withSocketsDo $ bracket (mkSock Sock.Datagram "0.0.0.0" 1337) Sock.close $ \udpSocket -> bracket (mkSock Sock.Stream "0.0.0.0" 8080) Sock.close $ \websocket -> do
+  hSetBuffering stdout NoBuffering
+  hSetBuffering stderr NoBuffering
   Sock.listen websocket 5
   Sock.setSocketOption websocket Sock.ReuseAddr 1
   Sock.setSocketOption websocket Sock.NoDelay 1
+  continue <- newTVarIO True
+  Priv.dropUidGid (Left "nobody") (Left "nogroup")
+  Priv.status >>= \stat -> mPutStrLn $ "dropped privs to: " ++ show stat
+  _ <- Signals.installHandler Signals.sigINT (Signals.CatchOnce $ atomically $ writeTVar continue False) Nothing
+  _ <- Signals.installHandler Signals.sigTERM (Signals.CatchOnce $ atomically $ writeTVar continue False) Nothing
   displays <- newTVarIO []
   clients <- newTVarIO []
   forkIO $ forever $ do
@@ -172,14 +183,17 @@ main = Sock.withSocketsDo $ bracket (mkSock Sock.Datagram "0.0.0.0" 1337) Sock.c
     writeChan masterChan msg
   forkIO $ forever $ do
     threadDelay 3000000
-    mPutStrLn "cleaning up"
+    {-mPutStrLn "cleaning up"-}
     atomically $ cleanupDisplays displays
     atomically $ cleanupClients clients
-  forever $ do
-    disps <- atomically $ readTVar displays
-    cs <- atomically $ readTVar clients
-    mPutStrLn $ "number of displays = " ++ show (length disps) ++ "\nnumber of clients = " ++ show (length cs) ++ "\nclients = " ++ show cs
-    threadDelay 1000000
+  let loop disps' cs' = atomically (readTVar continue) >>= \c -> when c $ do
+                disps <- atomically $ readTVar displays
+                cs <- atomically $ readTVar clients
+                when (disps' /= disps || cs /= cs') $ mPutStrLn $ "number of displays = " ++ show (length disps) ++ "\nnumber of clients = " ++ show (length cs) ++ "\nclients = " ++ show cs
+                {-threadDelay 1000000-}
+                threadDelay 10000000
+                loop disps cs
+  loop [] []
   where
   send displays bs = readTVar displays >>= foldrM (\d acc -> readTVar d >>= maybe (return acc) (\c -> writeTChan c bs >> return (d : acc))) [] >>= writeTVar displays
   cleanupDisplays displays = readTVar displays >>= filterM (fmap isJust . readTVar) >>= writeTVar displays

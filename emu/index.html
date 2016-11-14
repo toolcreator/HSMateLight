@@ -33,13 +33,16 @@
       canvas.setAttribute("width", 40);
       canvas.style.width = "100%";
       canvas.style.height = "100%";
+      canvas.style.border = "1px solid #000000";
       document.body.appendChild(canvas);
+      document.body.appendChild(document.createTextNode("Available streams:"));
       var ul = document.createElement("ul");
       document.body.appendChild(ul);
 
       var cdata = canvas.getContext("2d");
       var imgData = cdata.createImageData(40,16);
 
+      //var connection = new WebSocket('ws://sven.cc:8080/');
       var connection = new WebSocket('ws://127.0.0.1:8080/');
       connection.binaryType = 'arraybuffer';
       connection.onerror = function (error) {
