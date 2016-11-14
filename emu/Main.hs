@@ -106,7 +106,7 @@ newDisplay websocket clients = do
   case wconnMb of
     Left e -> do
       Sock.close conn
-      mHPutStrLn stderr ("handshake exception: " ++ e)
+      mHPutStrLn stderr ("exception at accepting: " ++ e)
       newTVarIO Nothing
     Right wconn -> do
       chan <- newTChanIO
