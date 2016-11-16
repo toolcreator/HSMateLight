@@ -95,35 +95,44 @@ wordToBytes w = map (\i -> fromIntegral $ w `shiftR` (i * 8)) [byteSize -1 , byt
 bytesToWord :: forall a. (FiniteBits a, Integral a) => [Word8] -> a
 bytesToWord = fst . foldr (\b (r, c) -> (r .|. fromIntegral b `shiftL` c :: a, c + 8)) (0 :: a, 0 :: Int)
 
-newDisplay :: Sock.Socket -> TVar [(Bool, Sock.SockAddr)] -> IO (TVar (Maybe (TChan Frame)))
-newDisplay websocket clients = do
-  mHPutStrLn stderr "at accept websocket conn"
+newDisplayStandalone :: IO [(Bool, Sock.SockAddr)] -> (TVar (Maybe (TChan Frame)) -> IO ()) -> Sock.Socket -> IO ()
+newDisplayStandalone clients addDisplay websocket = do
   (conn, _) <- Sock.accept websocket
-  mHPutStrLn stderr "done accepting websocket conn"
-  wconnMb <- (WSock.makePendingConnection conn (WSock.ConnectionOptions (return ())) >>= fmap Right . WSock.acceptRequest) `catches` [
-              Handler $ \(e :: WSock.HandshakeException) -> return $ Left $ show e
-             ,Handler $ \(e :: WSock.ConnectionException) -> return $ Left $ show e
-             ,Handler $ \(e :: SomeException) -> return $ Left $ show e]
+  makePendCon conn >>= maybe (return ()) (newDisplay clients addDisplay $ Sock.close conn)
+  where
+  makePendCon :: Sock.Socket -> IO (Maybe WSock.PendingConnection)
+  makePendCon conn = (WSock.makePendingConnection conn (WSock.ConnectionOptions (return ())) >>= return . Just) `catches` [
+                 Handler $ \(e :: WSock.HandshakeException) -> mHPutStrLn stderr ("exception at standalone accept (HandshakeException)" ++ show e) >> Sock.close conn >> return Nothing
+                ,Handler $ \(e :: WSock.ConnectionException) -> mHPutStrLn stderr ("exception at standalone accept (ConnectionException)" ++ show e) >> Sock.close conn >> return Nothing
+                ,Handler $ \(e :: SomeException) -> mHPutStrLn stderr ("exception at standalone accept (SomeException)" ++ show e) >> Sock.close conn >> return Nothing
+                ]
+
+
+
+newDisplay :: IO [(Bool, Sock.SockAddr)] -> (TVar (Maybe (TChan Frame)) -> IO ()) -> IO () -> WSock.ServerApp
+newDisplay clients addDisplay doClose pendConn = do
+  wconnMb <- (WSock.acceptRequest pendConn >>= return . Just) `catches` [
+            Handler $ \(e :: WSock.HandshakeException) -> mHPutStrLn stderr ("exception at acceptRequest (HandshakeException)" ++ show e) >> doClose >> return Nothing
+           ,Handler $ \(e :: WSock.ConnectionException) -> mHPutStrLn stderr ("exception at acceptRequest (ConnectionException)" ++ show e) >> doClose >> return Nothing
+           ,Handler $ \(e :: SomeException) -> mHPutStrLn stderr ("exception at standalone acceptRequest (SomeException)" ++ show e) >> doClose >> return Nothing
+           ]
   case wconnMb of
-    Left e -> do
-      Sock.close conn
-      mHPutStrLn stderr ("exception at accepting: " ++ e)
-      newTVarIO Nothing
-    Right wconn -> do
+    Nothing -> doClose
+    Just wconn -> do
       chan <- newTChanIO
       mvchan <- newTVarIO $ Just chan
-      activeAddress <- atomically $ readTVar clients >>= \cs -> case cs of { [(_, c)] -> newTVar $ Just c; _ -> newTVar Nothing }
+      activeAddress <- clients >>= \cs -> case cs of { [(_, c)] -> newTVarIO $ Just c; _ -> newTVarIO Nothing }
       tidrMVar <- newEmptyMVar
       tidsMVar <- newEmptyMVar
       mPutStrLn "got connection"
       sendLock <- newMVar ()
       let wSend msg = withMVar sendLock (\() -> WSock.sendBinaryData wconn (msg :: Message))
       tidUpdater <- forkIO $ forever $ do
-        cs <- atomically $ readTVar clients
+        cs <- clients
         wSend $ MCUpdate $ map snd cs
-        threadDelay 1000000
+        threadDelay 750000
 
-      let receiver = handle (\(e :: WSock.ConnectionException) -> mPutStrLn ("received exception in receiver: " ++ show e ++ " -> closing") >> closeMVar tidsMVar) $ do
+      let receiver = handle (\(e :: WSock.ConnectionException) -> mPutStrLn ("exception in receiver: " ++ show e)) $ flip finally (closeMVar tidsMVar) $ do
             msg <- WSock.receive wconn
             case msg of
               WSock.ControlMessage (WSock.Close _ _) -> mPutStrLn "received close message" >> closeMVar tidsMVar
@@ -134,7 +143,7 @@ newDisplay websocket clients = do
                 threadDelay 10000
                 receiver
               _ -> mPutStrLn "unrecognized message received" >> receiver
-          sender = handle (\(e :: WSock.ConnectionException) -> mPutStrLn ("received exception in sender: " ++ show e ++ " -> closing") >> closeMVar tidrMVar) $ do
+          sender = handle (\(e :: WSock.ConnectionException) -> mPutStrLn ("exception in sender: " ++ show e)) $ flip finally (closeMVar tidrMVar) $ do
             msg <- atomically $ readTChan chan
             sockAddr <- atomically $ readTVar activeAddress
             when (sockAddr == Just (source msg)) $ wSend $ MFrame msg
@@ -144,13 +153,13 @@ newDisplay websocket clients = do
             atomically $ modifyTVar mvchan (\_ -> Nothing)
             killThread tid
             killThread tidUpdater
-            Sock.close conn
+            doClose
 
       tidr <- forkIO receiver
       putMVar tidrMVar tidr
       tids <- forkIO sender
       putMVar tidsMVar tids
-      return mvchan
+      addDisplay mvchan
 
 receive :: Sock.Socket -> IO Frame
 receive udpSocket = uncurry (flip Frame) `fmap` NBS.recvFrom udpSocket 2048
@@ -161,8 +170,8 @@ main = Sock.withSocketsDo $ bracket (mkSock Sock.Datagram "0.0.0.0" 1337) Sock.c
   hSetBuffering stdout NoBuffering
   hSetBuffering stderr NoBuffering
   Sock.listen websocket 5
-  Sock.setSocketOption websocket Sock.ReuseAddr 1
-  Sock.setSocketOption websocket Sock.NoDelay 1
+  {-Sock.setSocketOption websocket Sock.ReuseAddr 1-}
+  {-Sock.setSocketOption websocket Sock.NoDelay 1-}
   continue <- newTVarIO True
   Priv.dropUidGid (Left "nobody") (Left "nogroup")
   Priv.status >>= \stat -> mPutStrLn $ "dropped privs to: " ++ show stat
@@ -170,29 +179,26 @@ main = Sock.withSocketsDo $ bracket (mkSock Sock.Datagram "0.0.0.0" 1337) Sock.c
   _ <- Signals.installHandler Signals.sigTERM (Signals.CatchOnce $ atomically $ writeTVar continue False) Nothing
   displays <- newTVarIO []
   clients <- newTVarIO []
-  forkIO $ forever $ do
-    display <- newDisplay websocket clients
-    atomically $ modifyTVar displays (display :)
+
+  forkIO $ forever $ newDisplayStandalone (atomically $ readTVar clients) (\display -> atomically $ modifyTVar displays (display :)) websocket
+
   masterChan <- newChan
   forkIO $ forever $ do
     bs <- readChan masterChan
-    {-mPutStrLn "processing message"-}
     atomically $ send displays bs
   forkIO $ forever $ do
     msg <- receive udpSocket
     atomically $ touchSeen clients $ source msg
     writeChan masterChan msg
   forkIO $ forever $ do
-    threadDelay 3000000
-    {-mPutStrLn "cleaning up"-}
+    threadDelay 500000
     atomically $ cleanupDisplays displays
     atomically $ cleanupClients clients
   let loop disps' cs' = atomically (readTVar continue) >>= \c -> when c $ do
                 disps <- atomically $ readTVar displays
                 cs <- atomically $ readTVar clients
                 when (disps' /= disps || cs /= cs') $ mPutStrLn $ "number of displays = " ++ show (length disps) ++ "\nnumber of clients = " ++ show (length cs) ++ "\nclients = " ++ show cs
-                {-threadDelay 1000000-}
-                threadDelay 10000000
+                threadDelay 500000
                 loop disps cs
   loop [] []
   where
