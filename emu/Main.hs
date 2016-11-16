@@ -102,7 +102,8 @@ newDisplay websocket clients = do
   mHPutStrLn stderr "done accepting websocket conn"
   wconnMb <- (WSock.makePendingConnection conn (WSock.ConnectionOptions (return ())) >>= fmap Right . WSock.acceptRequest) `catches` [
               Handler $ \(e :: WSock.HandshakeException) -> return $ Left $ show e
-             ,Handler $ \(e :: WSock.ConnectionException) -> return $ Left $ show e]
+             ,Handler $ \(e :: WSock.ConnectionException) -> return $ Left $ show e
+             ,Handler $ \(e :: SomeException) -> return $ Left $ show e]
   case wconnMb of
     Left e -> do
       Sock.close conn
