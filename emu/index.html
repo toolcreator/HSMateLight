@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <title>HSML</title>
   <script>
+    var dimx = 30;
+    var dimy = 12;
     function renderSockAddr(arr) {
       if(arr[0] == 0) {//inet
         return arr[6].toString() + '.' + arr[5].toString() + '.' + arr[4].toString() + '.' + arr[3].toString() + ':' + ((arr[1] << 8) + (arr[2] << 0)).toString();
@@ -29,8 +31,8 @@
     }
     document.addEventListener('DOMContentLoaded', function () {
       var canvas = document.createElement("canvas");
-      canvas.setAttribute("height", 16);
-      canvas.setAttribute("width", 40);
+      canvas.setAttribute("height", dimy);
+      canvas.setAttribute("width", dimx);
       canvas.style.width = "100%";
       canvas.style.height = "100%";
       canvas.style.border = "1px solid #000000";
@@ -40,7 +42,7 @@
       document.body.appendChild(ul);
 
       var cdata = canvas.getContext("2d");
-      var imgData = cdata.createImageData(40,16);
+      var imgData = cdata.createImageData(dimx,dimy);
 
       //var connection = new WebSocket('ws://sven.cc:8080/');
       var connection = new WebSocket('ws://127.0.0.1:8080/');

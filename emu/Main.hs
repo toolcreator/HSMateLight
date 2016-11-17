@@ -1,5 +1,10 @@
 {-# LANGUAGE OverloadedStrings, ScopedTypeVariables #-}
+import qualified Network.Wai as Wai
+import qualified Network.HTTP.Types.Status as Status
+import qualified Network.HTTP.Types.Header as Header
+import qualified Network.Wai.Handler.Warp as Warp
 import qualified Network.WebSockets as WSock
+import qualified Network.Wai.Handler.WebSockets as WWSock
 import qualified Network.WebSockets.Stream as WStream
 import qualified Network.Socket as Sock
 import qualified Network.Socket.ByteString as NBS
@@ -11,6 +16,7 @@ import Control.Concurrent.STM (atomically)
 import Control.Concurrent.STM.TVar
 import Control.Concurrent.STM.TChan
 import Control.Exception
+import Control.DeepSeq
 import System.IO.Unsafe (unsafePerformIO)
 import Data.Maybe
 import Data.Foldable
@@ -20,6 +26,10 @@ import Data.Word
 import Test.QuickCheck
 import qualified DropPriv as Priv
 import qualified System.Posix.Signals as Signals
+import Data.Map ((!))
+
+import StaticFiles
+import qualified StaticPages
 
 {-# NOINLINE logLock #-}
 logLock :: MVar ()
@@ -98,7 +108,7 @@ bytesToWord = fst . foldr (\b (r, c) -> (r .|. fromIntegral b `shiftL` c :: a, c
 newDisplayStandalone :: IO [(Bool, Sock.SockAddr)] -> (TVar (Maybe (TChan Frame)) -> IO ()) -> Sock.Socket -> IO ()
 newDisplayStandalone clients addDisplay websocket = do
   (conn, _) <- Sock.accept websocket
-  makePendCon conn >>= maybe (return ()) (newDisplay clients addDisplay $ Sock.close conn)
+  makePendCon conn >>= maybe (return ()) (\pendConn -> forkIO (newDisplay clients addDisplay (Sock.close conn) pendConn) >> return ())
   where
   makePendCon :: Sock.Socket -> IO (Maybe WSock.PendingConnection)
   makePendCon conn = (WSock.makePendingConnection conn (WSock.ConnectionOptions (return ())) >>= return . Just) `catches` [
@@ -111,6 +121,7 @@ newDisplayStandalone clients addDisplay websocket = do
 
 newDisplay :: IO [(Bool, Sock.SockAddr)] -> (TVar (Maybe (TChan Frame)) -> IO ()) -> IO () -> WSock.ServerApp
 newDisplay clients addDisplay doClose pendConn = do
+  mHPutStrLn stderr "newDisplay started"
   wconnMb <- (WSock.acceptRequest pendConn >>= return . Just) `catches` [
             Handler $ \(e :: WSock.HandshakeException) -> mHPutStrLn stderr ("exception at acceptRequest (HandshakeException)" ++ show e) >> doClose >> return Nothing
            ,Handler $ \(e :: WSock.ConnectionException) -> mHPutStrLn stderr ("exception at acceptRequest (ConnectionException)" ++ show e) >> doClose >> return Nothing
@@ -127,10 +138,7 @@ newDisplay clients addDisplay doClose pendConn = do
       mPutStrLn "got connection"
       sendLock <- newMVar ()
       let wSend msg = withMVar sendLock (\() -> WSock.sendBinaryData wconn (msg :: Message))
-      tidUpdater <- forkIO $ forever $ do
-        cs <- clients
-        wSend $ MCUpdate $ map snd cs
-        threadDelay 750000
+      tidUpdater <- myThreadId
 
       let receiver = handle (\(e :: WSock.ConnectionException) -> mPutStrLn ("exception in receiver: " ++ show e)) $ flip finally (closeMVar tidsMVar) $ do
             msg <- WSock.receive wconn
@@ -155,18 +163,20 @@ newDisplay clients addDisplay doClose pendConn = do
             killThread tidUpdater
             doClose
 
-      tidr <- forkIO receiver
-      putMVar tidrMVar tidr
-      tids <- forkIO sender
-      putMVar tidsMVar tids
+      forkIO receiver >>= putMVar tidrMVar
+      forkIO sender >>= putMVar tidsMVar
       addDisplay mvchan
+      forever $ do
+        cs <- clients
+        wSend $ MCUpdate $ map snd cs
+        threadDelay 750000
 
 receive :: Sock.Socket -> IO Frame
 receive udpSocket = uncurry (flip Frame) `fmap` NBS.recvFrom udpSocket 2048
 
 -- Use System.Timeout
 main :: IO ()
-main = Sock.withSocketsDo $ bracket (mkSock Sock.Datagram "0.0.0.0" 1337) Sock.close $ \udpSocket -> bracket (mkSock Sock.Stream "0.0.0.0" 8080) Sock.close $ \websocket -> do
+main = Sock.withSocketsDo $ bracket (mkSock Sock.Datagram "0.0.0.0" 1337) Sock.close $ \udpSocket -> bracket (mkSock Sock.Stream "0.0.0.0" 8080) Sock.close $ \websocket -> staticFiles `deepseq` do
   hSetBuffering stdout NoBuffering
   hSetBuffering stderr NoBuffering
   Sock.listen websocket 5
@@ -180,7 +190,10 @@ main = Sock.withSocketsDo $ bracket (mkSock Sock.Datagram "0.0.0.0" 1337) Sock.c
   displays <- newTVarIO []
   clients <- newTVarIO []
 
-  forkIO $ forever $ newDisplayStandalone (atomically $ readTVar clients) (\display -> atomically $ modifyTVar displays (display :)) websocket
+  {-forkIO $ Warp.runSettingsSocket (Warp.setPort 8080 Warp.defaultSettings) websocket $ WWSock.websocketsOr WSock.defaultConnectionOptions (newDisplay (atomically $ readTVar clients) (\display -> atomically $ modifyTVar displays (display :)) (return ())) $ Route.route prepped-}
+  let websocketPage = newDisplay (atomically $ readTVar clients) (\display -> atomically $ modifyTVar displays (display :)) (return ())
+  forkIO $ Warp.runSettingsSocket (Warp.setPort 8080 Warp.defaultSettings) websocket $ WWSock.websocketsOr WSock.defaultConnectionOptions websocketPage mainPage
+  {-forkIO $ forever $ newDisplayStandalone (atomically $ readTVar clients) (\display -> atomically $ modifyTVar displays (display :)) websocket-}
 
   masterChan <- newChan
   forkIO $ forever $ do
@@ -215,3 +228,5 @@ main = Sock.withSocketsDo $ bracket (mkSock Sock.Datagram "0.0.0.0" 1337) Sock.c
     addr <- Sock.inet_addr addr
     Sock.bind socket (Sock.SockAddrInet (fromIntegral port) addr)
     return socket
+  mainPage = StaticPages.staticPages staticFiles Nothing (StaticPages.lookupWithDefault ["index.html"])
+  {-mainPage req resp = resp $ Wai.responseLBS Status.status200 [(Header.hContentType, "text/html")] $ BSL.fromStrict $ staticFiles ! "index.html"-}
