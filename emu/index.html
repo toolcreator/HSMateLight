@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <title>HSML</title>
   <script>
-    var dimx = 30;
-    var dimy = 12;
+    var dimx = 40;
+    var dimy = 16;
     function renderSockAddr(arr) {
       if(arr[0] == 0) {//inet
         return arr[6].toString() + '.' + arr[5].toString() + '.' + arr[4].toString() + '.' + arr[3].toString() + ':' + ((arr[1] << 8) + (arr[2] << 0)).toString();
@@ -44,8 +44,7 @@
       var cdata = canvas.getContext("2d");
       var imgData = cdata.createImageData(dimx,dimy);
 
-      //var connection = new WebSocket('ws://sven.cc:8080/');
-      var connection = new WebSocket('ws://127.0.0.1:8080/');
+      var connection = new WebSocket(((window.location.protocol === "https:") ? "wss://" : "ws://") + window.location.host);
       connection.binaryType = 'arraybuffer';
       connection.onerror = function (error) {
         console.log('WSError: ' + error);
