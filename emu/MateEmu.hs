@@ -88,17 +88,8 @@ receive :: Sock.Socket -> IO Frame
 receive udpSocket = uncurry (flip Frame) `fmap` NBS.recvFrom udpSocket 2048
 
 -- Use System.Timeout
-runMateEmu :: MateArgs ->  IO ()
-runMateEmu margs = bracket (mkSock Sock.Datagram (ip margs) (mateport margs)) Sock.close $ \udpSocket -> bracket (mkSock Sock.Stream (ip margs) (port margs)) Sock.close $ \websocket -> do
-  Sock.listen websocket 5
-  {-Sock.setSocketOption websocket Sock.ReuseAddr 1-}
-  {-Sock.setSocketOption websocket Sock.NoDelay 1-}
-  continue <- newTVarIO True
-  when (isJust $ uidgid margs) $ do
-    Priv.dropUidGid (Left $ fst $ fromJust $ uidgid margs) (Left $ snd $ fromJust $ uidgid margs)
-    Priv.status >>= \stat -> mPutStrLn $ "dropped privs to: " ++ show stat
-  _ <- Signals.installHandler Signals.sigINT (Signals.CatchOnce $ atomically $ writeTVar continue False) Nothing
-  _ <- Signals.installHandler Signals.sigTERM (Signals.CatchOnce $ atomically $ writeTVar continue False) Nothing
+runMateEmu :: MateArgs -> Sock.Socket -> Sock.Socket -> TVar Bool -> IO ()
+runMateEmu margs udpSocket websocket continue = do
   displays <- newTVarIO []
   clients <- newTVarIO []
   let websocketPage = newDisplay (atomically $ readTVar clients) (\display -> atomically $ modifyTVar displays (display :)) (return ())
@@ -131,11 +122,6 @@ runMateEmu margs = bracket (mkSock Sock.Datagram (ip margs) (mateport margs)) So
     helper [] = [(True, sockAddr)]
     helper (c@(seen, addr):cs) | addr == sockAddr = (True, addr) : cs
                                | otherwise = c : helper cs
-  mkSock ptype addr port = do
-    socket <- Sock.socket Sock.AF_INET ptype Sock.defaultProtocol
-    addr <- Sock.inet_addr addr
-    Sock.bind socket (Sock.SockAddrInet (fromIntegral port) addr)
-    return socket
   mainPage = StaticPages.staticPages staticFiles Nothing (StaticPages.lookupWithDefault ["index.html"])
 
 main :: IO ()
@@ -146,4 +132,18 @@ main = do
   putStr "preparing... "
   staticFiles `deepseq` putStrLn "done"
   putStrLn $ "open http://" ++ ip args ++ ":" ++ show (port args) ++ "\nand stream crap to " ++ ip args ++ ":" ++ show (mateport args) ++ " udp"
-  Sock.withSocketsDo (runMateEmu args)
+  continue <- newTVarIO True
+  _ <- Signals.installHandler Signals.sigINT (Signals.CatchOnce $ atomically $ writeTVar continue False) Nothing
+  _ <- Signals.installHandler Signals.sigTERM (Signals.CatchOnce $ atomically $ writeTVar continue False) Nothing
+  Sock.withSocketsDo $ bracket (mkSock Sock.Datagram (ip args) (mateport args)) Sock.close $ \udpSocket -> bracket (mkSock Sock.Stream (ip args) (port args)) Sock.close $ \websocket -> do
+    Sock.listen websocket 5
+    when (isJust $ uidgid args) $ do
+      Priv.dropUidGid (Left $ fst $ fromJust $ uidgid args) (Left $ snd $ fromJust $ uidgid args)
+      Priv.status >>= \stat -> mPutStrLn $ "dropped privs to: " ++ show stat
+    runMateEmu args udpSocket websocket continue
+  where
+  mkSock ptype addr port = do
+    socket <- Sock.socket Sock.AF_INET ptype Sock.defaultProtocol
+    addr <- Sock.inet_addr addr
+    Sock.bind socket (Sock.SockAddrInet (fromIntegral port) addr)
+    return socket
