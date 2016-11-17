@@ -169,7 +169,7 @@ newDisplay clients addDisplay doClose pendConn = do
       forever $ do
         cs <- clients
         wSend $ MCUpdate $ map snd cs
-        threadDelay 750000
+        threadDelay 1000000
 
 receive :: Sock.Socket -> IO Frame
 receive udpSocket = uncurry (flip Frame) `fmap` NBS.recvFrom udpSocket 2048
