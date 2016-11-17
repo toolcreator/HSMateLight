@@ -105,20 +105,6 @@ wordToBytes w = map (\i -> fromIntegral $ w `shiftR` (i * 8)) [byteSize -1 , byt
 bytesToWord :: forall a. (FiniteBits a, Integral a) => [Word8] -> a
 bytesToWord = fst . foldr (\b (r, c) -> (r .|. fromIntegral b `shiftL` c :: a, c + 8)) (0 :: a, 0 :: Int)
 
-newDisplayStandalone :: IO [(Bool, Sock.SockAddr)] -> (TVar (Maybe (TChan Frame)) -> IO ()) -> Sock.Socket -> IO ()
-newDisplayStandalone clients addDisplay websocket = do
-  (conn, _) <- Sock.accept websocket
-  makePendCon conn >>= maybe (return ()) (\pendConn -> forkIO (newDisplay clients addDisplay (Sock.close conn) pendConn) >> return ())
-  where
-  makePendCon :: Sock.Socket -> IO (Maybe WSock.PendingConnection)
-  makePendCon conn = (WSock.makePendingConnection conn (WSock.ConnectionOptions (return ())) >>= return . Just) `catches` [
-                 Handler $ \(e :: WSock.HandshakeException) -> mHPutStrLn stderr ("exception at standalone accept (HandshakeException)" ++ show e) >> Sock.close conn >> return Nothing
-                ,Handler $ \(e :: WSock.ConnectionException) -> mHPutStrLn stderr ("exception at standalone accept (ConnectionException)" ++ show e) >> Sock.close conn >> return Nothing
-                ,Handler $ \(e :: SomeException) -> mHPutStrLn stderr ("exception at standalone accept (SomeException)" ++ show e) >> Sock.close conn >> return Nothing
-                ]
-
-
-
 newDisplay :: IO [(Bool, Sock.SockAddr)] -> (TVar (Maybe (TChan Frame)) -> IO ()) -> IO () -> WSock.ServerApp
 newDisplay clients addDisplay doClose pendConn = do
   mHPutStrLn stderr "newDisplay started"
@@ -229,4 +215,3 @@ main = Sock.withSocketsDo $ bracket (mkSock Sock.Datagram "0.0.0.0" 1337) Sock.c
     Sock.bind socket (Sock.SockAddrInet (fromIntegral port) addr)
     return socket
   mainPage = StaticPages.staticPages staticFiles Nothing (StaticPages.lookupWithDefault ["index.html"])
-  {-mainPage req resp = resp $ Wai.responseLBS Status.status200 [(Header.hContentType, "text/html")] $ BSL.fromStrict $ staticFiles ! "index.html"-}
