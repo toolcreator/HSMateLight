@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings, ScopedTypeVariables #-}
+module Main where
 import qualified Network.Wai.Handler.Warp as Warp
 import qualified Network.WebSockets as WSock
 import qualified Network.Wai.Handler.WebSockets as WWSock
@@ -100,12 +101,8 @@ main = Sock.withSocketsDo $ bracket (mkSock Sock.Datagram "0.0.0.0" 1337) Sock.c
   _ <- Signals.installHandler Signals.sigTERM (Signals.CatchOnce $ atomically $ writeTVar continue False) Nothing
   displays <- newTVarIO []
   clients <- newTVarIO []
-
-  {-forkIO $ Warp.runSettingsSocket (Warp.setPort 8080 Warp.defaultSettings) websocket $ WWSock.websocketsOr WSock.defaultConnectionOptions (newDisplay (atomically $ readTVar clients) (\display -> atomically $ modifyTVar displays (display :)) (return ())) $ Route.route prepped-}
   let websocketPage = newDisplay (atomically $ readTVar clients) (\display -> atomically $ modifyTVar displays (display :)) (return ())
   forkIO $ Warp.runSettingsSocket (Warp.setPort 8080 Warp.defaultSettings) websocket $ WWSock.websocketsOr WSock.defaultConnectionOptions websocketPage mainPage
-  {-forkIO $ forever $ newDisplayStandalone (atomically $ readTVar clients) (\display -> atomically $ modifyTVar displays (display :)) websocket-}
-
   masterChan <- newChan
   forkIO $ forever $ do
     bs <- readChan masterChan
