@@ -19,12 +19,12 @@ staticFiles = $(do
     -- I shall hate myself for this...
         allFiles fns | null fns = return []
                      | otherwise = do
-        (files, dirs) <- foldM (\(f, d) fn -> doesDirectoryExist fn >>= \de -> return $ if de then (f, fn : d) else (fn : f, d)) ([], []) fns
-        res <- sequence $ flip map dirs $ \fn -> do
-            de <- doesDirectoryExist fn
-            if de then map (\x -> fn ++ "/" ++ x) `fmap` filter (\x -> x /= "." && x /= "..") `fmap` getDirectoryContents fn else return []
-        filess <- allFiles $ concat res
-        return $ files ++ filess
+          (files, dirs) <- foldM (\(f, d) fn -> doesDirectoryExist fn >>= \de -> return $ if de then (f, fn : d) else (fn : f, d)) ([], []) fns
+          res <- sequence $ flip map dirs $ \fn -> do
+              de <- doesDirectoryExist fn
+              if de then map (\x -> fn ++ "/" ++ x) `fmap` filter (\x -> x /= "." && x /= "..") `fmap` getDirectoryContents fn else return []
+          filess <- allFiles $ concat res
+          return $ files ++ filess
     files <- runIO $ allFiles initialPaths
     map <- foldM (\map fn -> checkReadFile fn >>= \cont -> return $ M.insert fn cont map) M.empty files
     reader <- [| read |]
