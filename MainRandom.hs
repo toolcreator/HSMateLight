@@ -29,7 +29,7 @@ eventTestNoMonad ints _ () = (frame, ())
   frame = fst $ getFrame ints
 
 dim :: (Int, Int)
-dim = (32, 12)
+dim = (40, 16)
 
 main :: IO ()
 main = Sock.withSocketsDo $ runMateRandom (Config (fromJust $ parseAddress "127.0.0.1") 1337 dim (Just 10000) False []) eventTest ()
