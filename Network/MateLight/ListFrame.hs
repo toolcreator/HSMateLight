@@ -1,5 +1,5 @@
-module ListFrame where
-import MateLight
+module Network.MateLight.ListFrame where
+import Network.MateLight
 import Data.Word
 import qualified Data.ByteString.Lazy.Builder as BSL
 import qualified Data.ByteString.Short as BSS

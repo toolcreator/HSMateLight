@@ -1,5 +1,5 @@
-import MateLight
-import ListFrame
+import Network.MateLight
+import Network.MateLight.ListFrame
 
 import Data.Maybe
 import qualified Network.Socket as Sock

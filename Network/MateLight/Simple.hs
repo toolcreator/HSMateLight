@@ -1,4 +1,4 @@
-module Simple (
+module Network.MateLight.Simple (
    Event(..)
   ,stringEvent
   ,runMate
@@ -6,9 +6,12 @@ module Simple (
   ,parseAddress
   ,Config(..)
   ,Frame(..)
+  ,ListFrame(..)
+  ,Pixel(..)
   ) where
 
-import MateLight
+import Network.MateLight
+import Network.MateLight.ListFrame
 import Data.Typeable
 import Control.Monad.State
 import System.Random

@@ -3,8 +3,7 @@ import Data.Maybe
 import Control.Monad.State
 import Control.Monad
 
-import Simple
-import ListFrame
+import Network.MateLight.Simple
 
 eventTest :: [Int] -> [Event String] -> () -> (ListFrame, ())
 eventTest ints _ () = (frame, ())
@@ -30,7 +29,7 @@ eventTestNoMonad ints _ () = (frame, ())
   frame = fst $ getFrame ints
 
 dim :: (Int, Int)
-dim = (40, 16)
+dim = (32, 12)
 
 main :: IO ()
 main = Sock.withSocketsDo $ runMateRandom (Config (fromJust $ parseAddress "127.0.0.1") 1337 dim (Just 10000) False []) eventTest ()

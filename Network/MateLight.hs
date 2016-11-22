@@ -1,5 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving,RankNTypes,ScopedTypeVariables,ExistentialQuantification #-}
-module MateLight (
+module Network.MateLight (
    EventProviderT
   ,parseAddress
   ,Config(..)

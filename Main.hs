@@ -1,5 +1,5 @@
-import Simple
-import ListFrame
+module Main where
+import Network.MateLight.Simple
 
 import Data.Maybe
 import qualified Network.Socket as Sock
@@ -19,6 +19,7 @@ eventTest events pixel = (toFrame dim pixel', pixel')
   where pixel' = foldl (\acc (Event mod ev) -> if mod == "KEYBOARD" then move dim ev acc else acc) pixel events
 
 dim :: (Int, Int)
-dim = (40, 16)
+dim = (30, 12)
 main :: IO ()
-main = Sock.withSocketsDo $ runMate (Config (fromJust $ parseAddress "127.0.0.1") 1337 dim (Just 1000000) False []) eventTest (0, 0)
+main = Sock.withSocketsDo $ runMate (Config (fromJust $ parseAddress "78.47.89.118") 1337 dim (Just 1000000) False []) eventTest (0, 0)
+{-main = Sock.withSocketsDo $ runMate (Config (fromJust $ parseAddress "127.0.0.1") 1337 dim (Just 1000000) False []) eventTest (0, 0)-}
