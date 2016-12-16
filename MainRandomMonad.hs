@@ -20,4 +20,4 @@ eventTest dim events = liftIO frame >>= return . ListFrame
     return $ Pixel r g b
 
 main :: IO ()
-main = let dim = (30,12) in Sock.withSocketsDo $ runMateM (Config (fromJust $ parseAddress "134.28.70.172") 1337 dim (Just 25000) True []) (eventTest dim) undefined
+main = let dim = (30,12) in Sock.withSocketsDo $ runMateM (Config (fromJust $ parseAddress "134.28.70.172") 1337 dim (Just 33000) True []) (eventTest dim) undefined

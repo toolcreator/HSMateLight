@@ -32,4 +32,4 @@ dim :: (Int, Int)
 dim = (30, 12)
 
 main :: IO ()
-main = Sock.withSocketsDo $ runMateRandom (Config (fromJust $ parseAddress "134.28.70.172") 1337 dim (Just 10000) False []) eventTest ()
+main = Sock.withSocketsDo $ runMateRandom (Config (fromJust $ parseAddress "134.28.70.172") 1337 dim (Just 33000) False []) eventTest ()
