@@ -74,7 +74,7 @@ runMateM conf fkt s = do
   chanStepper <- newChan :: IO (Chan ())
   case cStepTime conf of
     Nothing -> return ()
-    Just time -> dupChan chanStepper >>= forkIO . stepper time >> return ()
+    Just time -> dupChan chanStepper >>= forkIO . stepper (max 33000 time) >> return ()
   chanEvent <- newTChanIO :: IO (TChan EventT)
   forM_ (cEventProviders conf) $ \ep -> atomically (dupTChan chanEvent) >>= forkIO . ep
   forkIO $ (if cSynchronized conf then acumulatingCaller else caller) sock chanStepper chanEvent undefined s
