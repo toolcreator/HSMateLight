@@ -21,6 +21,7 @@ import Control.Concurrent.Chan
 import Control.Concurrent.STM
 import Control.Concurrent.STM.TChan
 import Data.Typeable
+import qualified Network.MateLight.Debug as Debug
 
 {-
  - TODO: Exception handling?
@@ -95,6 +96,7 @@ runMateM conf fkt s = do
   acumulatingCaller sock chanStepper chanEvent oldFrame curState = do
     () <- readChan chanStepper
     events <- atomically $ whileM (not `fmap` isEmptyTChan chanEvent) (readTChan chanEvent)
+    Debug.debug $ "Will call with events: " ++ show events
     (newFrame, newState) <- runReaderT (runStateT (unMateMonad (fkt events)) curState) oldFrame :: IO (f, s)
     sendFrame sock newFrame
     acumulatingCaller sock chanStepper chanEvent newFrame newState
@@ -109,7 +111,9 @@ runMateM conf fkt s = do
       writeChan dupped $ Right event
     let helper oldFrame curState = do
           msg <- readChan unitedChan
-          (newFrame, newState) <- runReaderT (runStateT (unMateMonad (fkt [ev | Right ev <- [msg]])) curState) oldFrame :: IO (f, s)
+          let realEvents = [ev | Right ev <- [msg]]
+          Debug.debug $ "Will call with events: " ++ show realEvents
+          (newFrame, newState) <- runReaderT (runStateT (unMateMonad (fkt realEvents)) curState) oldFrame :: IO (f, s)
           sendFrame sock newFrame
           helper newFrame newState
     helper oldFrame oldState
