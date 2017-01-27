@@ -7,6 +7,8 @@ module Network.MateLight (
   ,Frame(..)
   ,EventT(..)
   ,MateMonad()
+  ,mHPutStrLn
+  ,mPutStrLn
   ) where
 import Data.Word
 import System.IO
@@ -22,6 +24,15 @@ import Control.Concurrent.STM
 import Control.Concurrent.STM.TChan
 import Data.Typeable
 import qualified Network.MateLight.Debug as Debug
+import System.IO.Unsafe (unsafePerformIO)
+
+{-# NOINLINE logLock #-}
+logLock :: MVar ()
+logLock = unsafePerformIO $ newMVar ()
+
+mHPutStrLn :: Handle -> String -> IO ()
+mHPutStrLn handle str = withMVar logLock (\() -> hPutStrLn handle str)
+mPutStrLn = mHPutStrLn stdout
 
 {-
  - TODO: Exception handling?
