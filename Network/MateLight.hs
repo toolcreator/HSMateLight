@@ -25,6 +25,7 @@ import Control.Concurrent.STM.TChan
 import Data.Typeable
 import qualified Network.MateLight.Debug as Debug
 import System.IO.Unsafe (unsafePerformIO)
+import Data.Maybe
 
 {-# NOINLINE logLock #-}
 logLock :: MVar ()
@@ -76,7 +77,7 @@ whileM cond action = do
    else
     return []
 
-runMateM :: forall f s . (Frame f) => Config -> ([EventT] -> MateMonad f s IO f) -> s -> IO ()
+runMateM :: forall f s . (Frame f) => Config -> ([EventT] -> MateMonad f s IO (Maybe f)) -> s -> IO ()
 runMateM conf fkt s = do
   -- Change socket code
   sock <- Sock.socket Sock.AF_INET Sock.Datagram Sock.defaultProtocol 
@@ -106,27 +107,27 @@ runMateM conf fkt s = do
   acumulatingCaller :: Sock.Socket -> Chan () -> TChan EventT -> f -> s -> IO ()
   acumulatingCaller sock chanStepper chanEvent oldFrame curState = do
     () <- readChan chanStepper
-    events <- atomically $ whileM (not `fmap` isEmptyTChan chanEvent) (readTChan chanEvent)
+    events <- (EventT "STEP" () :) `fmap` atomically (whileM (not `fmap` isEmptyTChan chanEvent) (readTChan chanEvent))
     Debug.debug $ "Will call with events: " ++ show events
-    (newFrame, newState) <- runReaderT (runStateT (unMateMonad (fkt events)) curState) oldFrame :: IO (f, s)
-    sendFrame sock newFrame
-    acumulatingCaller sock chanStepper chanEvent newFrame newState
+    (newFrame, newState) <- runReaderT (runStateT (unMateMonad (fkt events)) curState) oldFrame :: IO (Maybe f, s)
+    maybe (return ()) (sendFrame sock) newFrame
+    acumulatingCaller sock chanStepper chanEvent (fromMaybe oldFrame newFrame) newState
   caller :: Sock.Socket -> Chan () -> TChan EventT -> f -> s -> IO ()
   caller sock chanStepper chanEvent oldFrame oldState = do
-    unitedChan <- newChan :: IO (Chan (Either () EventT))
+    unitedChan <- newChan :: IO (Chan EventT)
     dupChan unitedChan >>= \dupped -> forkIO $ forever $ do
       () <- readChan chanStepper
-      writeChan dupped $ Left ()
+      writeChan dupped $ EventT "STEP" ()
     dupChan unitedChan >>= \dupped -> forkIO $ forever $ do
       event <- atomically $ readTChan chanEvent
-      writeChan dupped $ Right event
+      writeChan dupped event
     let helper oldFrame curState = do
           msg <- readChan unitedChan
-          let realEvents = [ev | Right ev <- [msg]]
+          let realEvents = [msg]
           Debug.debug $ "Will call with events: " ++ show realEvents
-          (newFrame, newState) <- runReaderT (runStateT (unMateMonad (fkt realEvents)) curState) oldFrame :: IO (f, s)
-          sendFrame sock newFrame
-          helper newFrame newState
+          (newFrame, newState) <- runReaderT (runStateT (unMateMonad (fkt realEvents)) curState) oldFrame :: IO (Maybe f, s)
+          maybe (return ()) (sendFrame sock) newFrame
+          helper (fromMaybe oldFrame newFrame) newState
     helper oldFrame oldState
   sendFrame :: Frame f => Sock.Socket -> f -> IO ()
   sendFrame sock frame = if BSL.length bs == fromIntegral (x * y * 3) then NBSL.sendAll sock $ theData frame else hPutStrLn stderr "function returned incorrect frame"

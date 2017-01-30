@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 module Network.MateLight.Simple (
    Event(..)
   ,stringEvent
@@ -24,7 +25,8 @@ data Event a = Event String a deriving (Eq, Ord, Show, Read)
  - The purpose of the state is to communicate what should happen in the next frame.
  -}
 runMate :: (Frame f) => Config -> ([Event String] -> s -> (f, s)) -> s -> IO ()
-runMate conf fkt = runMateM conf $ state . fkt . map stringEvent
+--runMate conf fkt = runMateM conf $ state . ((uncurry ((,) . Just) .) . (fkt . map stringEvent))
+runMate conf fkt = runMateM conf $ \evs -> state $ \s -> let (a, b) = fkt (map stringEvent evs) s in (Just a, b)
 
 {-
  - Similar to the runMate function, but the function additionally must take an infinite list of random Ints as first argument.
@@ -33,10 +35,8 @@ runMate conf fkt = runMateM conf $ state . fkt . map stringEvent
 runMateRandom :: (Frame f) => Config -> ([Int] -> [Event String] -> s -> (f, s)) -> s -> IO ()
 runMateRandom conf fkt = runMateM conf $ \evs -> do
   ints <- liftIO $ newStdGen >>= return . randomRs (minBound, maxBound)
-  state $ fkt ints (map stringEvent evs)
+  state $ \s -> let (a, b) = fkt ints (map stringEvent evs) s in (Just a, b)
 
 -- misc
-castEvent :: Typeable a => EventT -> Maybe (Event a)
-castEvent (EventT mod a) = Event mod `fmap` cast a
 stringEvent :: EventT -> Event String
 stringEvent (EventT mod a) = Event mod $ show a
