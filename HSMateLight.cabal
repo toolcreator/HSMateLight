@@ -58,7 +58,7 @@ library
   other-extensions:    GeneralizedNewtypeDeriving, RankNTypes, ScopedTypeVariables, ExistentialQuantification
   
   -- Other library packages from which modules are imported.
-  build-depends:       base >=4.9 && <4.10, mtl >=2.2 && <2.3, iproute >=1.7 && <1.8, network >=2.6 && <2.7, bytestring >=0.10 && <0.11, stm >=2.4 && <2.5, random >=1.1 && <1.2
+  build-depends:       base >=4.9 && <5, mtl >=2.2 && <3, iproute >=1.7 && <2, network >=2.6 && <3, bytestring >=0.10 && <1, stm >=2.4 && <3, random >=1.1 && <2
   
   -- Directories containing source files.
   hs-source-dirs: .
